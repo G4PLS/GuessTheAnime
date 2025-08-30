@@ -1,1 +1,0 @@
-import{w as t,p as e}from"./chunk-PVWAREVJ-C6codAFB.js";function r({}){return[{title:"New React Router App"},{name:"description",content:"Welcome to React Router!"}]}const i=t(function(){return e.jsx("div",{})});export{i as default,r as meta};

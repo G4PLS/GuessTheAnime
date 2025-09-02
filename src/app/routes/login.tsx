@@ -1,23 +1,12 @@
-import { fetchList } from "@/lib/fetchList"; // your fetchList function
-import { ArrowPathIcon } from "@heroicons/react/16/solid";
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-  useCurrentSettings,
-  useMediaListEntries,
-  useMediaLists,
-} from "../hooks/databaseHooks";
-import { db, type Hints } from "@/lib/database";
-import MediaListSelector from "@/components/MediaListSelector/MediaListSelector";
-import HintSelector from "@/components/HintSelector/HintSelector";
-import GameSettings from "@/components/GameSettings/GameSettings";
 import AnilistSync from "@/components/AnilistSync/AnilistSync";
+import GameSettings from "@/components/GameSettings/GameSettings";
+import { db } from "@/lib/database";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Login() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  
-  const mediaLists = useMediaLists();
 
   useEffect(() => {
     db.settings.get("current").then((settings) => {

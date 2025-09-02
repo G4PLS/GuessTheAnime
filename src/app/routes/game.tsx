@@ -1,34 +1,40 @@
-import { db, type GameState, type Guess } from "@/lib/database";
+import SearchBar from "@/components/GuessField/GuessField";
+import {
+  db,
+  type GameRecord,
+  type Guess,
+  type Hints,
+  type MediaRecord
+} from "@/lib/database";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   useCurrentGame,
   useCurrentMedia,
-  useRemainingMedia,
+  useGuessHistory,
+  useRemainingMedia
 } from "../hooks/databaseHooks";
-import SearchBar from "@/components/GuessField/GuessField";
 
 export default function Game() {
   const navigate = useNavigate();
-  const game = useCurrentGame();
-  const currentMedia = useCurrentMedia(); // Comes from game.state
-  const [currentGuess, setCurrentGuess] = useState<string>("");
 
-  const MAX_ATTEMPTS = 8;
+  const game = useCurrentGame(); // CURRENT GAME
+  const currentMedia = useCurrentMedia(); // CURRENT MEDIA THATS BEING GUESSED (COMES FROM GAMESTATE)
+  const currentHints = game?.state?.currentHints; // CURRENT HINTS ACTIVE IN THE STATE
+  const animeList = useRemainingMedia(); // CURRENT WHEN ANYTHING RELATED TO GUESSING CHANGES
 
-  const animeList = useRemainingMedia();
+  const [currentGuess, setCurrentGuess] = useState<string>(""); // WHAT THE USER INPUTS IN THE GUESS FIELD
 
-  const guessedCount = game?.state?.guesses.length ?? 0;
-  const totalCount = guessedCount + (animeList?.length ?? 0);
-  const attempts = game?.state?.guesses.length ?? 0;
+  const guessed = useGuessHistory()?.length||0;
 
-  const state = game?.state;
+  const MAX_ATTEMPTS = Object.entries(game?.selectedHints || {}).filter(
+    ([_, enabled]) => enabled
+  ).length;
 
   async function guess() {
     if (!currentMedia || !game) return;
 
-    const attemptsSoFar = game!.state!.guesses.length;
-
+    const attemptsSoFar = game.state!.guesses.length;
     const title = currentGuess;
 
     // Check if the guess is correct
@@ -46,103 +52,150 @@ export default function Game() {
       correct: attemptsSoFar < MAX_ATTEMPTS && guessIsCorrect,
     };
 
-    const updatedGuesses = [...game!.state!.guesses, newGuess];
+    const updatedGuesses = [...game.state!.guesses, newGuess];
 
     // Determine if round is over
-    const roundOver = newGuess.correct || updatedGuesses.length >= MAX_ATTEMPTS;
+    const roundOver = newGuess.correct || updatedGuesses.length > MAX_ATTEMPTS;
 
-    // Progressive hints
-    const hintUnlocks: (keyof GameState)[] = [
-      "review",
-      "studio",
-      "genres",
-      "format",
-      "release",
-      "tags",
-      "similar",
-    ];
+    // Start with a copy of currentHints
+    let newHints = { ...game.state!.currentHints };
 
-    const newHints: Partial<GameState> = {};
-    hintUnlocks.forEach((hint, index) => {
-      // Reveal this hint if the user has reached this attempt
-      newHints[hint] = attemptsSoFar >= index;
-    });
+    if (!roundOver) {
+      // Pick a random hint from selectedHints that hasn't been revealed yet
+      const availableHints = Object.entries(game.selectedHints)
+        .filter(([_, enabled]) => enabled) // only enabled hints
+        .map(([hintKey]) => hintKey as keyof Hints) // cast to keyof Hints
+        .filter((hintKey) => newHints[hintKey] !== true); // only not revealed
 
-    if (roundOver) {
+      if (availableHints.length > 0) {
+        const randomHintKey = availableHints[
+          Math.floor(Math.random() * availableHints.length)
+        ] as keyof Hints;
+        newHints = {
+          ...newHints,
+          [randomHintKey]: true,
+        };
+      }
+
+      // Just update guesses and hints
+      await db.game.update("current", {
+        state: {
+          ...game.state!,
+          guesses: updatedGuesses,
+          currentHints: newHints,
+        },
+      });
+    } else {
       // Save current guesses to history
       await db.guessHistory.add({
         guesses: updatedGuesses,
         mediaId: currentMedia.id!,
         completedAt: new Date(),
+        revealedHints: game.state!.currentHints,
       });
 
-      // Pick next media
-      const remaining = await db.media
-        .where("id")
-        .noneOf(updatedGuesses.map((g) => g.mediaId))
-        .toArray();
-
-      const nextMedia = remaining.length
-        ? remaining[Math.floor(Math.random() * remaining.length)]
-        : null;
+      const nextMedia = await pickRandom(game);
 
       // Reset game state for next round
       await db.game.update("current", {
         state: {
           currentMediaId: nextMedia?.id ?? 0,
           guesses: [],
-          format: false,
-          genres: false,
-          release: false,
-          review: false,
-          similar: false,
-          studio: false,
-          tags: false,
-        },
-      });
-    } else {
-      // Just update guesses and reveal hints
-      await db.game.update("current", {
-        state: {
-          ...game!.state!,
-          guesses: updatedGuesses,
-          ...newHints,
+          currentHints: {},
         },
       });
     }
   }
 
+  async function pickRandom(game: GameRecord): Promise<MediaRecord|null> {
+    // Pick next media
+    const allowedEntries = await db.mediaListEntries
+      .where("listName")
+      .anyOf(game.selectedListNames)
+      .toArray();
+
+    const guessHistory = await db.guessHistory.toArray();
+
+    const allowedIds = allowedEntries.map((entry) => entry.mediaId);
+
+    const guessedMediaIds = guessHistory.map((guess) => guess.mediaId);
+
+    const remainingIds = allowedIds.filter(id =>
+      !guessedMediaIds.includes(id)
+    );
+
+    const remaining = await db.media.where("id").anyOf(remainingIds).toArray();
+
+    console.log("ALLOWED", allowedIds, "GUESSED", guessedMediaIds, "REMAINING", remainingIds);
+
+    const nextMedia = remaining.length
+      ? remaining[Math.floor(Math.random() * remaining.length)]
+      : null;
+
+    return nextMedia;
+  }
+
   useEffect(() => {
     const init = async () => {
-      const gameState = await db.game.get("current");
+      const settings = await db.settings.get("current");
+      let game = await db.game.get("current");
 
-      if (!gameState) {
+      if (!settings) {
         navigate("/login");
         return;
       }
 
-      if (!gameState.state || gameState.state.currentMediaId === 0) {
+      if (!game) {
+        await db.game.put(
+          {
+            id: "current",
+            selectedHints: settings.selectedHints,
+            selectedListNames: settings.selectedListNames,
+            state: {
+              currentHints: {},
+              guesses: [],
+              currentMediaId: -1,
+            },
+          },
+          "current"
+        );
+        game = await db.game.get("current");
+      }
+
+      if (!game) {
+        navigate("/login");
+        return;
+      }
+
+      if (!game.state || game.state.currentMediaId === -1) {
         const allMedia = await db.media.toArray();
         if (allMedia.length === 0) return;
 
-        const randomMedia =
-          allMedia[Math.floor(Math.random() * allMedia.length)];
+        const randomMedia = await pickRandom(game);
+
+        if (!randomMedia) {
+          navigate("/login")
+          return;
+        }
 
         await db.game.put({
           id: "current",
+          selectedHints: settings.selectedHints,
+          selectedListNames: settings.selectedListNames,
           state: {
             currentMediaId: randomMedia.id!,
             guesses: [],
-            hints: {
-              season: false,
-              format: false,
-              studios: false,
-              rating: false,
-              genres: false,
-              tags: false,
-              review: false,
-              recommendations: false,
+            currentHints: {
               description: false,
+              format: false,
+              genres: false,
+              popularity: false,
+              rating: false,
+              recommendations: false,
+              review: false,
+              season: false,
+              studios: false,
+              tags: false,
             },
           },
         });
@@ -155,6 +208,10 @@ export default function Game() {
   return (
     <div className="flex flex-col items-center justify-center w-full h-screen bg-gray-900 text-white p-4 overflow-hidden">
       {/* Play Area */}
+      <h2>
+        {guessed}/{animeList?.length||0} {currentMedia &&
+          (currentMedia.media.title.english || currentMedia.media.title.romaji)}
+      </h2>
       <div className="grid grid-cols-2 gap-4 bg-gray-800 p-4 rounded-xl w-4/6 h-4/6 min-h-0 overflow-auto">
         {/* Left Column */}
         <div className="flex flex-col gap-4 min-h-0">
@@ -164,15 +221,9 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold">REVIEW</h2>
               <p className="flex-1 text-sm overflow-auto min-h-0">
-                [Minor spoiler ahead] What do you get when you mash well
-                thought-out ideas from other great sci-fi cop shows into a stew
-                and then leave that stew on a oven that's not turned on? A cold
-                mess. ID:Invaded as a product is a cold mess. I can't help but
-                try to understand what people are praising about this and wonder
-                to myself if we even watched the same show. Yes, it's not awful
-                and in a landscape of established IPs and forced squeals/remakes
-                having an original anime come out is fantastic, but is the bar
-                set so low that this show is considered good? I suppose ...
+                {currentHints?.review &&
+                  (currentMedia?.media.reviews.nodes.length || 0) > 0 &&
+                  currentMedia?.media.reviews.nodes[0].summary}
               </p>
             </div>
 
@@ -180,25 +231,7 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold">DESCRIPTION</h2>
               <p className="flex-1 text-sm overflow-auto min-h-0">
-                The Mizuhanome System is a highly advanced development that
-                allows people to enter one of the most intriguing places in
-                existence—the human mind. Through the use of so-called
-                "cognition particles" left behind at a crime scene by the
-                perpetrator, detectives from the specialized police squad Kura
-                can manifest a criminal's unconscious mind as a bizarre stream
-                of thoughts in a virtual world. Their task is to explore this
-                psychological plane, called an "id well," to reveal the identity
-                of the culprit. Not just anyone can enter the id wells; the
-                prerequisite is that you must have killed someone yourself. Such
-                is the case for former detective Akihito Narihisago, who is
-                known as "Sakaido" inside the id wells. Once a respected member
-                of the police, tragedy struck, and he soon found himself on the
-                other side of the law. Nevertheless, Narihisago continues to
-                assist Kura in confinement. While his prodigious detective
-                skills still prove useful toward investigations, Narihisago
-                discovers that not everything is as it seems, as behind the
-                seemingly standalone series of murder cases lurks a much more
-                sinister truth.
+                {currentHints?.description && currentMedia?.media.description}
               </p>
             </div>
           </div>
@@ -207,11 +240,17 @@ export default function Game() {
           <div className="grid grid-cols-2 gap-2 flex-1 min-w-0">
             <div className="bg-gray-700 p-2 rounded-lg text-center">
               <h3 className="font-bold">SEASON</h3>
-              <p className="text-sm">Summer 2023</p>
+              <p className="text-sm">
+                {currentHints?.season &&
+                  `${currentMedia?.media.season} ${currentMedia?.media.seasonYear}`}
+              </p>
             </div>
             <div className="bg-gray-700 p-2 rounded-lg text-center">
               <h3 className="font-bold">FORMAT</h3>
-              <p className="text-sm">TV (12 Eps)</p>
+              <p className="text-sm">
+                {currentHints?.format &&
+                  `${currentMedia?.media.format} (${currentMedia?.media.episodes} Episodes)`}
+              </p>
             </div>
           </div>
 
@@ -219,11 +258,16 @@ export default function Game() {
           <div className="grid grid-cols-2 gap-2 flex-1 min-w-0">
             <div className="bg-gray-700 p-2 rounded-lg text-center">
               <h3 className="font-bold">RATING</h3>
-              <p className="text-sm">Mean: 5.2 | Avg: 3.5 | ZFChris: 9.0</p>
+              <p className="text-sm">
+                {currentHints?.rating &&
+                  `Mean: ${currentMedia?.media.meanScore} Avg: ${currentMedia?.media.averageScore} User: ${currentMedia?.score}`}
+              </p>
             </div>
             <div className="bg-gray-700 p-2 rounded-lg text-center">
               <h3 className="font-bold">POPULARITY</h3>
-              <p className="text-sm">#1234</p>
+              <p className="text-sm">
+                {currentHints?.popularity && currentMedia?.media.popularity}
+              </p>
             </div>
           </div>
         </div>
@@ -235,30 +279,14 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">TAGS</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {[
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "B", rank: 95 },
-                  // ...more items
-                ].map((tag, i) => (
-                  <p key={i}>{tag.name}</p>
-                ))}
+                {currentHints?.tags &&
+                  currentMedia?.media.tags
+                    .sort((a, b) => (b.rank || 0) - (a.rank || 0))
+                    .map((tag) => (
+                      <p key={tag.name} className="text-sm">
+                        {tag.name} {tag.rank}
+                      </p>
+                    ))}
               </div>
             </div>
 
@@ -266,30 +294,12 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">Genres</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {[
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "B", rank: 95 },
-                  // ...more items
-                ].map((tag, i) => (
-                  <p key={i}>{tag.name}</p>
-                ))}
+                {currentHints?.genres &&
+                  currentMedia?.media.genres.map((genre) => (
+                    <p key={genre} className="text-sm">
+                      {genre}
+                    </p>
+                  ))}
               </div>
             </div>
 
@@ -297,30 +307,14 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">Studios</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {[
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "A", rank: 95 },
-                  { name: "B", rank: 95 },
-                  // ...more items
-                ].map((tag, i) => (
-                  <p key={i}>{tag.name}</p>
-                ))}
+                {currentHints?.studios &&
+                  currentMedia?.media.studios.edges
+                    .sort((a, b) => Number(b.isMain) - Number(a.isMain))
+                    .map((studio) => (
+                      <p key={studio.node.id} className="text-sm">
+                        {studio.node.name}
+                      </p>
+                    ))}
               </div>
             </div>
           </div>
@@ -329,18 +323,15 @@ export default function Game() {
           <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
             <h2 className="font-bold mb-2">SIMILAR</h2>
             <div className="flex-1 flex flex-grow gap-2 overflow-x-auto">
-              <div className="w-full h-full bg-gray-600 flex items-center justify-center">
-                Img
-              </div>
-              <div className="w-full h-full bg-gray-600 flex items-center justify-center">
-                Img
-              </div>
-              <div className="w-full h-full bg-gray-600 flex items-center justify-center">
-                Img
-              </div>
-              <div className="w-full h-full bg-gray-600 flex items-center justify-center">
-                Img
-              </div>
+              {currentHints?.recommendations &&
+                currentMedia?.media.recommendations.nodes.map((recomm) => (
+                  <img
+                    className="h-full bg-gray-600"
+                    title={recomm.mediaRecommendation.title.english || ""}
+                    src={recomm.mediaRecommendation.coverImage.medium || ""}
+                    alt={recomm.mediaRecommendation.title.romaji || ""}
+                  ></img>
+                ))}
             </div>
           </div>
         </div>
@@ -379,25 +370,6 @@ export default function Game() {
           >
             Guess
           </button>
-        </div>
-
-        {/* Previous Guesses */}
-        <div className="w-full flex flex-col gap-2">
-          <div className="bg-gray-700 p-2 rounded-md text-center">
-            Isekai Shikkaku
-          </div>
-          <div className="bg-gray-700 p-2 rounded-md text-center">
-            Pocket Monsters
-          </div>
-          <div className="bg-gray-700 p-2 rounded-md text-center">
-            Pocket Monsters
-          </div>
-          <div className="bg-gray-700 p-2 rounded-md text-center">
-            Pocket Monsters
-          </div>
-          <div className="bg-gray-700 p-2 rounded-md text-center">
-            Pocket Monsters
-          </div>
         </div>
       </div>
     </div>

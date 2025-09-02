@@ -27,8 +27,6 @@ export interface GameState {
   currentMediaId: number;
   guesses: Guess[];
   currentHints: Partial<Hints>; // Current hint states
-  selectedHints: Partial<Hints>; // Hints that are actually being used
-  selectedListNames: string[] // List names that are actually being used
 }
 
 // DATABASE TABLES
@@ -43,6 +41,8 @@ export interface SettingsRecord {
 export interface GameRecord {
   id: "current"; //PK
   state: GameState | null;
+  selectedHints: Partial<Hints>; // Hints that are actually being used
+  selectedListNames: string[] // List names that are actually being used
 }
 
 export interface MediaListRecord {
@@ -66,6 +66,7 @@ export interface GuessHistoryRecord {
   id?: number; //PK
   mediaId: number; //FK->MediaRecord;
   guesses: Guess[];
+  revealedHints: Partial<Hints>;
   completedAt: Date;
 }
 
@@ -159,6 +160,8 @@ export class AnilistDB extends Dexie {
         await this.game.put({
           id: "current",
           state: null,
+          selectedListNames: [],
+          selectedHints: {}
         });
 
         // 3️⃣ Add lists and media

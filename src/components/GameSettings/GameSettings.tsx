@@ -1,7 +1,8 @@
 import { useCurrentSettings, useMediaLists } from "@/app/hooks/databaseHooks";
-import MediaListSelector from "../MediaListSelector/MediaListSelector";
-import HintSelector from "../HintSelector/HintSelector";
+import { db } from "@/lib/database";
 import { useNavigate } from "react-router-dom";
+import HintSelector from "../HintSelector/HintSelector";
+import MediaListSelector from "../MediaListSelector/MediaListSelector";
 
 export interface GameSettingsProps {
   loading: boolean;
@@ -27,6 +28,9 @@ export default function GameSettings({ loading }: GameSettingsProps) {
       <button
         type="submit"
         onClick={async () => {
+          await db.guessHistory.clear();
+          await db.game.clear();
+
           //await db.resetGuesses();
           //await db.createGameState();
           navigate("/game");

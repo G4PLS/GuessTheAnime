@@ -2,26 +2,25 @@ import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
   type GameRecord,
-  type GameState,
   type Guess,
   type GuessHistoryRecord,
   type MediaListRecord,
   type MediaRecord,
-  type SettingsRecord,
+  type SettingsRecord
 } from "../../lib/database";
 
 export function useCurrentSettings(): SettingsRecord | undefined {
   return useLiveQuery(() => db.settings.get("current"), []);
 }
 
+// STATE HOOKS
 export function useCurrentGame(): GameRecord | undefined {
   return useLiveQuery(() => db.game.get("current"), []);
 }
 
-export function useMediaLists(): MediaListRecord[] | undefined {
-  return useLiveQuery(() => db.mediaLists.toArray(), []);
-}
-
+/**
+ * Converts state media Id to actual media
+ */
 export function useCurrentMedia(): MediaRecord | undefined {
   const game = useCurrentGame();
   return useLiveQuery(() => {
@@ -36,7 +35,18 @@ export function useCurrentGuess(): Guess | undefined {
   return useLiveQuery(() => {
     if (!game?.state?.guesses.length||0 <= 0) return undefined;
     return game.state.guesses[game.state.guesses.length-1];
-  });
+  }, [game?.state?.guesses]);
+}
+
+
+
+
+
+
+
+
+export function useMediaLists(): MediaListRecord[] | undefined {
+  return useLiveQuery(() => db.mediaLists.toArray(), []);
 }
 
 export function useMedia(): MediaRecord[] | undefined {
@@ -110,9 +120,12 @@ export function useMediaForSelectedLists(): MediaRecord[] | undefined {
 export function useRemainingMedia(): MediaRecord[] | undefined {
   return useLiveQuery(async () => {
     // 1️⃣ Get current settings
-    const settings = await db.settings.get("current");
-    if (!settings) return undefined;
-    const selectedLists = settings.selectedListNames;
+    const game = await db.game.get("current");
+
+    if (!game) return undefined;
+
+    const selectedLists = game.selectedListNames;
+
     if (selectedLists.length === 0) return [];
 
     // 2️⃣ Get all media entries in the selected lists
@@ -126,7 +139,6 @@ export function useRemainingMedia(): MediaRecord[] | undefined {
     const mediaRecords = allMedia as MediaRecord[]; // assume all exist
 
     // 3️⃣ Get current guesses from the game
-    const game = await db.game.get("current");
     const guessedIds = game?.state?.guesses.map((g) => g.mediaId) ?? [];
 
     // 4️⃣ Filter out already guessed media

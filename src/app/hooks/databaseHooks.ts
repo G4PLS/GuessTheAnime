@@ -6,7 +6,7 @@ import {
   type GuessHistoryRecord,
   type MediaListRecord,
   type MediaRecord,
-  type SettingsRecord
+  type SettingsRecord,
 } from "../../lib/database";
 
 export function useCurrentSettings(): SettingsRecord | undefined {
@@ -33,17 +33,10 @@ export function useCurrentGuess(): Guess | undefined {
   const game = useCurrentGame();
 
   return useLiveQuery(() => {
-    if (!game?.state?.guesses.length||0 <= 0) return undefined;
-    return game.state.guesses[game.state.guesses.length-1];
+    if (!game?.state?.guesses.length || 0 <= 0) return undefined;
+    return game.state.guesses[game.state.guesses.length - 1];
   }, [game?.state?.guesses]);
 }
-
-
-
-
-
-
-
 
 export function useMediaLists(): MediaListRecord[] | undefined {
   return useLiveQuery(() => db.mediaLists.toArray(), []);
@@ -75,6 +68,10 @@ export function useGuessHistory(): GuessHistoryRecord[] | undefined {
     () => db.guessHistory.orderBy("completedAt").reverse().toArray(),
     []
   );
+}
+
+export function useGameRunning(): boolean|undefined {
+  return useLiveQuery(() => db.isGameRunning(), [])
 }
 
 export function useMediaById(id?: number): MediaRecord | undefined {

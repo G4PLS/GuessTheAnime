@@ -1,4 +1,8 @@
-import { useCurrentSettings, useMediaLists } from "@/app/hooks/databaseHooks";
+import {
+  useCurrentSettings,
+  useGameRunning,
+  useMediaLists,
+} from "@/app/hooks/databaseHooks";
 import { db } from "@/lib/database";
 import { useNavigate } from "react-router-dom";
 import HintSelector from "../HintSelector/HintSelector";
@@ -12,6 +16,7 @@ export default function GameSettings({ loading }: GameSettingsProps) {
   const navigate = useNavigate();
   const settings = useCurrentSettings();
   const mediaLists = useMediaLists();
+  const gameRunning = useGameRunning();
 
   return (
     <form
@@ -47,6 +52,14 @@ export default function GameSettings({ loading }: GameSettingsProps) {
       >
         Start Game
       </button>
+
+      {gameRunning && (
+        <button 
+        onClick={() => navigate("/game")}
+        className="bg-blue-600 cursor-pointer text-white rounded-lg p-2 flex justify-center items-center transition hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-default disabled:hover:bg-blue-400">
+          Continue
+        </button>
+      )}
     </form>
   );
 }

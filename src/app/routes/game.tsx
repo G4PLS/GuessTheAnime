@@ -4,7 +4,7 @@ import {
   type GameRecord,
   type Guess,
   type Hints,
-  type MediaRecord
+  type MediaRecord,
 } from "@/lib/database";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +12,7 @@ import {
   useCurrentGame,
   useCurrentMedia,
   useGuessHistory,
-  useRemainingMedia
+  useRemainingMedia,
 } from "../hooks/databaseHooks";
 
 export default function Game() {
@@ -22,10 +22,13 @@ export default function Game() {
   const currentMedia = useCurrentMedia(); // CURRENT MEDIA THATS BEING GUESSED (COMES FROM GAMESTATE)
   const currentHints = game?.state?.currentHints; // CURRENT HINTS ACTIVE IN THE STATE
   const animeList = useRemainingMedia(); // CURRENT WHEN ANYTHING RELATED TO GUESSING CHANGES
+  const gameHints = Object.entries(game?.selectedHints || {}).filter(
+    ([_, value]) => value
+  );
 
   const [currentGuess, setCurrentGuess] = useState<string>(""); // WHAT THE USER INPUTS IN THE GUESS FIELD
 
-  const guessed = useGuessHistory()?.length||0;
+  const guessed = useGuessHistory()?.length || 0;
 
   const MAX_ATTEMPTS = Object.entries(game?.selectedHints || {}).filter(
     ([_, enabled]) => enabled
@@ -107,7 +110,7 @@ export default function Game() {
     }
   }
 
-  async function pickRandom(game: GameRecord): Promise<MediaRecord|null> {
+  async function pickRandom(game: GameRecord): Promise<MediaRecord | null> {
     // Pick next media
     const allowedEntries = await db.mediaListEntries
       .where("listName")
@@ -120,13 +123,20 @@ export default function Game() {
 
     const guessedMediaIds = guessHistory.map((guess) => guess.mediaId);
 
-    const remainingIds = allowedIds.filter(id =>
-      !guessedMediaIds.includes(id)
+    const remainingIds = allowedIds.filter(
+      (id) => !guessedMediaIds.includes(id)
     );
 
     const remaining = await db.media.where("id").anyOf(remainingIds).toArray();
 
-    console.log("ALLOWED", allowedIds, "GUESSED", guessedMediaIds, "REMAINING", remainingIds);
+    console.log(
+      "ALLOWED",
+      allowedIds,
+      "GUESSED",
+      guessedMediaIds,
+      "REMAINING",
+      remainingIds
+    );
 
     const nextMedia = remaining.length
       ? remaining[Math.floor(Math.random() * remaining.length)]
@@ -141,7 +151,8 @@ export default function Game() {
       let game = await db.game.get("current");
 
       if (!settings) {
-        navigate("/login");
+        console.log("NO SETTINGS");
+        navigate("/");
         return;
       }
 
@@ -163,7 +174,8 @@ export default function Game() {
       }
 
       if (!game) {
-        navigate("/login");
+        console.log("NO GAME");
+        navigate("/");
         return;
       }
 
@@ -174,7 +186,7 @@ export default function Game() {
         const randomMedia = await pickRandom(game);
 
         if (!randomMedia) {
-          navigate("/login")
+          navigate("/");
           return;
         }
 
@@ -209,7 +221,8 @@ export default function Game() {
     <div className="flex flex-col items-center justify-center w-full h-screen bg-gray-900 text-white p-4 overflow-hidden">
       {/* Play Area */}
       <h2>
-        {guessed}/{animeList?.length||0} {currentMedia &&
+        {guessed}/{animeList?.length || 0}{" "}
+        {currentMedia &&
           (currentMedia.media.title.english || currentMedia.media.title.romaji)}
       </h2>
       <div className="grid grid-cols-2 gap-4 bg-gray-800 p-4 rounded-xl w-4/6 h-4/6 min-h-0 overflow-auto">
@@ -279,7 +292,7 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">TAGS</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {currentHints?.tags &&
+                {currentHints?.tags && (currentMedia?.media.tags.length||0) > 0 &&
                   currentMedia?.media.tags
                     .sort((a, b) => (b.rank || 0) - (a.rank || 0))
                     .map((tag) => (
@@ -294,7 +307,7 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">Genres</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {currentHints?.genres &&
+                {currentHints?.genres && (currentMedia?.media.genres.length||0) > 0 &&
                   currentMedia?.media.genres.map((genre) => (
                     <p key={genre} className="text-sm">
                       {genre}
@@ -307,7 +320,7 @@ export default function Game() {
             <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
               <h2 className="font-bold mb-2">Studios</h2>
               <div className="flex-1 overflow-auto min-h-0">
-                {currentHints?.studios &&
+                {currentHints?.studios && (currentMedia?.media?.studios?.edges.length||0) > 0 &&
                   currentMedia?.media.studios.edges
                     .sort((a, b) => Number(b.isMain) - Number(a.isMain))
                     .map((studio) => (
@@ -323,7 +336,7 @@ export default function Game() {
           <div className="bg-gray-700 p-3 rounded-lg flex-1 min-w-0 flex flex-col">
             <h2 className="font-bold mb-2">SIMILAR</h2>
             <div className="flex-1 flex flex-grow gap-2 overflow-x-auto">
-              {currentHints?.recommendations &&
+              {currentHints?.recommendations && (currentMedia?.media.recommendations.nodes.length||0) > 0 &&
                 currentMedia?.media.recommendations.nodes.map((recomm) => (
                   <img
                     className="h-full bg-gray-600"
@@ -341,14 +354,20 @@ export default function Game() {
       <div className="w-4/6 flex flex-col items-center mt-6">
         {/* Pagination */}
         <div className="flex gap-2 mb-4">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              className="px-3 py-1 bg-gray-700 rounded-md hover:bg-gray-600"
-            >
-              {n}
-            </button>
-          ))}
+          {gameHints &&
+            gameHints.map((_, index) => (
+              <button
+                className="px-3 py-1 disabled:bg-gray-700 bg-pink-600 rounded-md hover:bg-pink-500"
+                disabled={
+                  Object.entries(currentHints || {}).filter(
+                    ([_, value]) => value
+                  ).length <
+                  index + 1
+                }
+              >
+                {index + 1}
+              </button>
+            ))}
           <button className="px-3 py-1 bg-pink-600 rounded-md hover:bg-pink-500">
             Skip
           </button>

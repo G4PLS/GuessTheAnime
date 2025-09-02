@@ -25,7 +25,7 @@ export function Header() {
   }
 
   useEffect(() => {
-    if (location.pathname === "/login")
+    if (location.pathname === "/")
       setPageLogin(true);
     else
       setPageLogin(false);

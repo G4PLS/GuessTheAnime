@@ -121,6 +121,13 @@ export class AnilistDB extends Dexie {
     await db.open();
   }
 
+  async isGameRunning(): Promise<boolean> {
+    const settings = await db.settings.get("current");
+    const game = await db.game.get("current");
+
+    return !!settings && !!game && !!game.state
+  }
+
   async createFromMediaListCollectionResponse(
     username: string,
     response: MediaListCollectionResponse
